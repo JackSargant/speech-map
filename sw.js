@@ -1,5 +1,5 @@
 // Cache the app shell so it opens offline; bump CACHE when index.html changes.
-var CACHE = "speech-map-v1";
+var CACHE = "speech-map-v2";
 var SHELL = ["./", "index.html", "manifest.webmanifest", "icon-192.png", "icon-512.png", "apple-touch-icon.png"];
 
 self.addEventListener("install", function (e) {

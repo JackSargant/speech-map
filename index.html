@@ -57,7 +57,8 @@ h1 { font-family: var(--display); font-weight: 600; font-size: 22px; letter-spac
 .seg { display: flex; border: 1px solid var(--edge); border-radius: 10px; overflow: hidden; }
 .seg button { height: 38px; padding: 0 16px; border: 0; background: transparent; color: var(--mute); font-family: var(--display); font-weight: 500; letter-spacing: 0.06em; text-transform: uppercase; font-size: 13px; }
 .seg button[aria-pressed="true"] { background: rgba(94, 231, 255, 0.14); color: var(--cyan); }
-#copy { margin-left: auto; height: 38px; padding: 0 14px; border-radius: 10px; border: 1px solid var(--amber); background: transparent; color: var(--amber); font-family: var(--display); font-weight: 500; letter-spacing: 0.06em; text-transform: uppercase; font-size: 13px; }
+#copy { height: 38px; padding: 0 14px; border-radius: 10px; border: 1px solid var(--amber); background: transparent; color: var(--amber); font-family: var(--display); font-weight: 500; letter-spacing: 0.06em; text-transform: uppercase; font-size: 13px; }
+#imp { height: 38px; padding: 0 14px; border-radius: 10px; border: 1px solid var(--cyan); background: transparent; color: var(--cyan); font-family: var(--display); font-weight: 500; letter-spacing: 0.06em; text-transform: uppercase; font-size: 13px; }
 #toast { font-family: var(--mono); font-size: 11px; color: var(--cyan); letter-spacing: 0.06em; min-height: 14px; flex: none; }
 
 #scroller {
@@ -214,6 +215,7 @@ textarea { resize: none; min-height: 112px; }
     <button id="vmap" type="button" aria-pressed="true">Map</button>
     <button id="vorder" type="button" aria-pressed="false">Order</button>
   </div>
+  <button id="imp" type="button" style="margin-left:auto">Import</button>
   <button id="copy" type="button">Copy for Claude</button>
 </div>
 <div id="toast" role="status" aria-live="polite"></div>
@@ -266,6 +268,17 @@ textarea { resize: none; min-height: 112px; }
   </div>
 </section>
 
+<section id="impsheet" class="sheet" hidden aria-label="Import stories">
+  <div class="field">
+    <label for="imptext">Paste stories in the Copy for Claude format</label>
+    <textarea id="imptext" placeholder="1. Story name&#10;What happened: ...&#10;Funny detail: ...&#10;Links to: Other story"></textarea>
+  </div>
+  <div class="row">
+    <button id="impclose" type="button">Cancel</button>
+    <button id="impgo" type="button" class="primary">Add stories</button>
+  </div>
+</section>
+
 <script>
 (function () {
   var C = 1000, MIN = 80, MAX = 1920, KEY = "speech-map-v1";
@@ -274,7 +287,7 @@ textarea { resize: none; min-height: 112px; }
 
   var $ = function (id) { return document.getElementById(id); };
   var world = $("world"), links = $("links"), scroller = $("scroller"), orderview = $("orderview");
-  var sheet = $("sheet"), copysheet = $("copysheet"), backdrop = $("backdrop");
+  var impsheet = $("impsheet"), sheet = $("sheet"), copysheet = $("copysheet"), backdrop = $("backdrop");
   var NS = "http://www.w3.org/2000/svg";
 
   function uid() { return "s" + Date.now().toString(36) + Math.random().toString(36).slice(2, 6); }
@@ -471,11 +484,12 @@ textarea { resize: none; min-height: 112px; }
   function showSheet(which) {
     sheet.hidden = which !== "edit";
     copysheet.hidden = which !== "copy";
+    impsheet.hidden = which !== "imp";
     backdrop.hidden = false;
     $("add").hidden = true;
   }
   function hideSheets() {
-    sheet.hidden = true; copysheet.hidden = true; backdrop.hidden = true; openId = null;
+    sheet.hidden = true; copysheet.hidden = true; impsheet.hidden = true; backdrop.hidden = true; openId = null;
     $("add").hidden = view !== "map";
   }
   function openSheet(id) {
@@ -567,9 +581,56 @@ textarea { resize: none; min-height: 112px; }
     var ta = $("copytext");
     copyNow(ta.value, function () { ta.focus(); ta.select(); toast("Select all and copy by hand."); });
   });
+  function parseStories(text) {
+    var out = [], cur = null, field = null;
+    String(text).split(/\r?\n/).forEach(function (raw) {
+      var ln = raw.trim(), m;
+      if ((m = ln.match(/^\d+[.)]\s+(.+)$/))) { cur = { title: m[1].trim(), story: "", funny: "", links: "" }; out.push(cur); field = null; return; }
+      if (!cur) return;
+      if ((m = ln.match(/^What happened:\s*(.*)$/i))) { field = "story"; cur.story = m[1]; return; }
+      if ((m = ln.match(/^Funny detail:\s*(.*)$/i))) { field = "funny"; cur.funny = m[1]; return; }
+      if ((m = ln.match(/^Links? to:\s*(.*)$/i))) { field = "links"; cur.links = m[1]; return; }
+      if (ln && field) cur[field] += (cur[field] ? " " : "") + ln;
+    });
+    return out.filter(function (s) { return s.title; });
+  }
+  function importStories(text) {
+    var list = parseStories(text);
+    if (!list.length) return 0;
+    state.nodes = state.nodes.filter(function (n) { return !n.example; });
+    var pending = [];
+    list.forEach(function (s) {
+      var story = /^\(not written yet\)$/i.test(s.story.trim()) ? "" : s.story.trim();
+      var funny = /^\(not picked yet\)$/i.test(s.funny.trim()) ? "" : s.funny.trim();
+      var n = null;
+      state.nodes.forEach(function (o) { if (name(o).toLowerCase() === s.title.toLowerCase()) n = o; });
+      if (n) { n.story = story; n.funny = funny; }
+      else {
+        var k = state.nodes.length, a = k * 2.399963, r = 220 + (k % 3) * 55;
+        n = { id: uid(), x: clamp(C + Math.cos(a) * r), y: clamp(C + Math.sin(a) * r), title: s.title, story: story, funny: funny };
+        state.nodes.push(n);
+      }
+      pending.push([n, s.links]);
+    });
+    pending.forEach(function (p) {
+      p[1].split(",").forEach(function (nm) {
+        nm = nm.trim().toLowerCase(); if (!nm) return;
+        state.nodes.forEach(function (o) { if (o !== p[0] && name(o).toLowerCase() === nm && !isLinked(p[0].id, o.id)) toggleLink(p[0].id, o.id); });
+      });
+    });
+    return list.length;
+  }
+  $("imp").addEventListener("click", function () { $("imptext").value = ""; showSheet("imp"); setTimeout(function () { try { $("imptext").focus(); } catch (e) {} }, 60); });
+  $("impclose").addEventListener("click", hideSheets);
+  $("impgo").addEventListener("click", function () {
+    var c = importStories($("imptext").value);
+    if (!c) { toast("Nothing found. Each story needs a line like: 1. Story name"); return; }
+    normalise(); queueSave(); hideSheets(); render();
+    toast("Added " + c + (c === 1 ? " story." : " stories."));
+  });
   $("copyclose").addEventListener("click", hideSheets);
 
-  document.addEventListener("keydown", function (e) { if (e.key === "Escape") { if (!sheet.hidden) closeSheet(); else if (!copysheet.hidden) hideSheets(); } });
+  document.addEventListener("keydown", function (e) { if (e.key === "Escape") { if (!sheet.hidden) closeSheet(); else if (!copysheet.hidden || !impsheet.hidden) hideSheets(); } });
 
   var local = loadLocal();
   state = local || { nodes: seed(), links: [], order: [], updatedAt: 0 };
