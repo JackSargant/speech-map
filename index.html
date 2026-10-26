@@ -1,0 +1,588 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Speech Map</title>
+<meta name="theme-color" content="#060a12">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Speech Map">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="apple-touch-icon" href="apple-touch-icon.png">
+<link rel="icon" type="image/png" href="icon-192.png">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@500;600&family=IBM+Plex+Mono:wght@400&family=IBM+Plex+Sans:wght@400;500&display=swap">
+<style>
+/* Layout: one-screen HUD. Header and toolbar, then either a scrollable star-map (speech at the centre, stories orbiting, amber links between them) or a running-order list. Edits happen in a bottom sheet. */
+:root {
+  --bg: #060a12;
+  --panel: #0b1322;
+  --panel-2: #101b2f;
+  --ink: #e4eef5;
+  --mute: #7d92a6;
+  --cyan: #5ee7ff;
+  --amber: #ffc46b;
+  --line: rgba(94, 231, 255, 0.32);
+  --grid: rgba(94, 231, 255, 0.055);
+  --edge: rgba(94, 231, 255, 0.22);
+  --danger: #ff8a8a;
+  --display: "Chakra Petch", "Trebuchet MS", sans-serif;
+  --body: "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --mono: "IBM Plex Mono", ui-monospace, Menlo, monospace;
+  color-scheme: dark;
+}
+* { box-sizing: border-box; }
+html, body { height: 100%; margin: 0; background: var(--bg); }
+body {
+  color: var(--ink);
+  font-family: var(--body);
+  font-size: 15px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding-top: calc(12px + env(safe-area-inset-top, 0px));
+  padding-bottom: calc(12px + env(safe-area-inset-bottom, 0px));
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+  overflow: hidden;
+  -webkit-text-size-adjust: 100%;
+}
+[hidden] { display: none !important; }
+header { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; flex: none; }
+h1 { font-family: var(--display); font-weight: 600; font-size: 22px; letter-spacing: 0.04em; margin: 0; text-transform: uppercase; }
+.count { font-family: var(--mono); font-size: 12px; color: var(--mute); letter-spacing: 0.08em; text-transform: uppercase; }
+
+.toolbar { display: flex; gap: 8px; align-items: center; flex: none; flex-wrap: wrap; }
+.seg { display: flex; border: 1px solid var(--edge); border-radius: 10px; overflow: hidden; }
+.seg button { height: 38px; padding: 0 16px; border: 0; background: transparent; color: var(--mute); font-family: var(--display); font-weight: 500; letter-spacing: 0.06em; text-transform: uppercase; font-size: 13px; }
+.seg button[aria-pressed="true"] { background: rgba(94, 231, 255, 0.14); color: var(--cyan); }
+#copy { margin-left: auto; height: 38px; padding: 0 14px; border-radius: 10px; border: 1px solid var(--amber); background: transparent; color: var(--amber); font-family: var(--display); font-weight: 500; letter-spacing: 0.06em; text-transform: uppercase; font-size: 13px; }
+#toast { font-family: var(--mono); font-size: 11px; color: var(--cyan); letter-spacing: 0.06em; min-height: 14px; flex: none; }
+
+#scroller {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  border: 1px solid var(--edge);
+  border-radius: 14px;
+  background: var(--panel);
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior: contain;
+}
+#world {
+  position: relative;
+  width: 2000px;
+  height: 2000px;
+  background-image:
+    radial-gradient(circle at 1000px 1000px, rgba(94, 231, 255, 0.10), transparent 520px),
+    linear-gradient(var(--grid) 1px, transparent 1px),
+    linear-gradient(90deg, var(--grid) 1px, transparent 1px);
+  background-size: auto, 40px 40px, 40px 40px;
+}
+#links { position: absolute; inset: 0; width: 2000px; height: 2000px; pointer-events: none; }
+#links .spoke { stroke: var(--line); stroke-width: 1.1; stroke-dasharray: 2 6; }
+#links .tie { stroke: var(--amber); stroke-width: 2; stroke-linecap: round; opacity: 0.85; }
+
+.root {
+  position: absolute;
+  left: 1000px; top: 1000px;
+  transform: translate(-50%, -50%);
+  width: 112px; height: 112px;
+  border-radius: 50%;
+  border: 1px solid var(--cyan);
+  background: radial-gradient(circle, rgba(94, 231, 255, 0.22), rgba(94, 231, 255, 0.04) 70%);
+  box-shadow: 0 0 40px rgba(94, 231, 255, 0.35), inset 0 0 22px rgba(94, 231, 255, 0.25);
+  display: grid; place-items: center;
+  text-align: center;
+  font-family: var(--display); font-weight: 600; font-size: 13px; letter-spacing: 0.12em; text-transform: uppercase;
+  line-height: 1.25;
+  pointer-events: none;
+}
+.root::after {
+  content: ""; position: absolute; inset: -14px; border-radius: 50%;
+  border: 1px dashed rgba(94, 231, 255, 0.35);
+}
+@media (prefers-reduced-motion: no-preference) {
+  .root::after { animation: spin 40s linear infinite; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+}
+
+.node {
+  position: absolute;
+  transform: translate(-50%, -50%);
+  width: 148px;
+  padding: 10px 12px 11px;
+  border-radius: 12px;
+  border: 1px solid var(--cyan);
+  background: linear-gradient(160deg, var(--panel-2), var(--panel));
+  box-shadow: 0 0 18px rgba(94, 231, 255, 0.22);
+  touch-action: none;
+  user-select: none; -webkit-user-select: none;
+  -webkit-touch-callout: none;
+  cursor: grab;
+}
+.node:active { cursor: grabbing; box-shadow: 0 0 28px rgba(94, 231, 255, 0.45); }
+.node.example { border-style: dashed; border-color: rgba(94, 231, 255, 0.55); }
+.node .t { font-family: var(--display); font-weight: 500; font-size: 15px; line-height: 1.2; overflow-wrap: anywhere; }
+.node .f { margin-top: 6px; font-size: 12px; line-height: 1.3; color: var(--amber); overflow-wrap: anywhere; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.node .f::before { content: "\25C6\00a0"; font-size: 8px; vertical-align: 1px; }
+.node .tag { margin-top: 6px; font-family: var(--mono); font-size: 10px; letter-spacing: 0.1em; color: var(--mute); text-transform: uppercase; }
+
+.hint {
+  position: absolute; left: 1000px; top: 1120px; transform: translateX(-50%);
+  width: 220px; text-align: center; color: var(--mute); font-size: 13px; line-height: 1.4; pointer-events: none;
+}
+
+#orderview {
+  flex: 1; min-height: 0; overflow-y: auto;
+  border: 1px solid var(--edge); border-radius: 14px; background: var(--panel);
+  padding: 12px; display: flex; flex-direction: column; gap: 10px;
+}
+.ocard { display: flex; gap: 10px; align-items: stretch; border: 1px solid var(--edge); border-radius: 12px; background: var(--panel-2); padding: 10px; min-width: 0; }
+.opos { font-family: var(--mono); font-size: 13px; color: var(--cyan); width: 22px; flex: none; padding-top: 2px; font-variant-numeric: tabular-nums; }
+.obody { flex: 1; min-width: 0; text-align: left; background: transparent; border: 0; color: var(--ink); padding: 0; }
+.obody .t { font-family: var(--display); font-weight: 500; font-size: 16px; overflow-wrap: anywhere; }
+.obody .f { margin-top: 4px; font-size: 13px; color: var(--amber); overflow-wrap: anywhere; }
+.obody .l { margin-top: 4px; font-family: var(--mono); font-size: 11px; color: var(--mute); overflow-wrap: anywhere; }
+.omove { display: flex; flex-direction: column; gap: 6px; flex: none; }
+.omove button { width: 40px; height: 40px; border-radius: 10px; border: 1px solid var(--edge); background: transparent; color: var(--cyan); font-size: 16px; }
+.omove button:disabled { opacity: 0.25; }
+.oempty { color: var(--mute); font-size: 14px; line-height: 1.5; padding: 8px 4px; }
+
+#add {
+  position: fixed;
+  right: calc(max(16px, env(safe-area-inset-right, 0px)) + 10px);
+  bottom: calc(env(safe-area-inset-bottom, 0px) + 28px);
+  height: 52px; padding: 0 20px;
+  border-radius: 26px;
+  border: 1px solid var(--cyan);
+  background: rgba(8, 20, 36, 0.92);
+  color: var(--cyan);
+  font-family: var(--display); font-weight: 600; font-size: 15px; letter-spacing: 0.08em; text-transform: uppercase;
+  box-shadow: 0 0 22px rgba(94, 231, 255, 0.4);
+}
+button { font: inherit; cursor: pointer; -webkit-tap-highlight-color: transparent; }
+button:focus-visible, input:focus-visible, textarea:focus-visible { outline: 2px solid var(--cyan); outline-offset: 2px; }
+
+#backdrop { position: fixed; inset: 0; background: rgba(2, 5, 10, 0.55); }
+.sheet {
+  position: fixed; left: 0; right: 0; bottom: 0;
+  max-height: 86dvh; overflow-y: auto;
+  background: var(--panel);
+  border-top: 1px solid var(--cyan);
+  border-radius: 18px 18px 0 0;
+  box-shadow: 0 -10px 40px rgba(94, 231, 255, 0.18);
+  padding-top: 16px;
+  padding-bottom: calc(18px + env(safe-area-inset-bottom, 0px));
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+  display: flex; flex-direction: column; gap: 14px;
+}
+.field { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+label, .lab { font-family: var(--mono); font-size: 11px; letter-spacing: 0.1em; text-transform: uppercase; color: var(--mute); }
+label.funny { color: var(--amber); }
+input, textarea {
+  width: 100%;
+  background: var(--bg); color: var(--ink);
+  border: 1px solid var(--edge); border-radius: 10px;
+  padding: 11px 12px; font: inherit; font-size: 16px; line-height: 1.4;
+}
+textarea { resize: none; min-height: 112px; }
+#funny { border-color: rgba(255, 196, 107, 0.45); }
+#copytext { min-height: 220px; font-family: var(--mono); font-size: 13px; }
+.chips { display: flex; flex-wrap: wrap; gap: 8px; }
+.chip { height: 36px; padding: 0 14px; border-radius: 18px; border: 1px solid var(--edge); background: transparent; color: var(--mute); font-size: 14px; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.chip[aria-pressed="true"] { border-color: var(--amber); color: var(--amber); background: rgba(255, 196, 107, 0.1); }
+.row { display: flex; gap: 10px; }
+.row button { flex: 1; height: 46px; border-radius: 10px; border: 1px solid var(--edge); background: transparent; color: var(--ink); letter-spacing: 0.04em; }
+.primary { border-color: var(--cyan) !important; color: var(--cyan) !important; font-family: var(--display); font-weight: 600; text-transform: uppercase; }
+#del { color: var(--mute); }
+#del.armed { color: var(--danger); border-color: var(--danger); }
+.note { font-size: 12px; color: var(--mute); margin: 0; }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>Speech Map</h1>
+  <span class="count" id="count"></span>
+</header>
+
+<div class="toolbar">
+  <div class="seg" role="group" aria-label="View">
+    <button id="vmap" type="button" aria-pressed="true">Map</button>
+    <button id="vorder" type="button" aria-pressed="false">Order</button>
+  </div>
+  <button id="copy" type="button">Copy for Claude</button>
+</div>
+<div id="toast" role="status" aria-live="polite"></div>
+
+<div id="scroller">
+  <div id="world">
+    <svg id="links" viewBox="0 0 2000 2000" aria-hidden="true"></svg>
+    <div class="root">The<br>Speech</div>
+    <div class="hint" id="hint">Tap + Story. One story, three sentences, then pick out the funniest detail.</div>
+  </div>
+</div>
+<div id="orderview" hidden></div>
+
+<button id="add" type="button">+ Story</button>
+
+<div id="backdrop" hidden></div>
+
+<section id="sheet" class="sheet" hidden aria-label="Edit story">
+  <div class="field">
+    <label for="title">Story name</label>
+    <input id="title" type="text" maxlength="60" autocomplete="off" placeholder="e.g. The wrong coat">
+  </div>
+  <div class="field">
+    <label for="story">What happened (about three sentences)</label>
+    <textarea id="story" placeholder="Just say what happened, plainly."></textarea>
+  </div>
+  <div class="field">
+    <label class="funny" for="funny">The funny detail</label>
+    <input id="funny" type="text" maxlength="120" autocomplete="off" placeholder="The one thing that made you laugh">
+  </div>
+  <div class="field" id="linkfield">
+    <span class="lab">Links to (same person, place or theme)</span>
+    <div class="chips" id="chips"></div>
+  </div>
+  <p class="note" id="exnote" hidden>This is an example. Edit it or delete it.</p>
+  <div class="row">
+    <button id="del" type="button">Delete</button>
+    <button id="done" type="button" class="primary">Done</button>
+  </div>
+</section>
+
+<section id="copysheet" class="sheet" hidden aria-label="Copy for Claude">
+  <div class="field">
+    <label for="copytext">Paste this into a chat with Claude</label>
+    <textarea id="copytext" readonly></textarea>
+  </div>
+  <div class="row">
+    <button id="copyclose" type="button">Close</button>
+    <button id="copygo" type="button" class="primary">Copy</button>
+  </div>
+</section>
+
+<script>
+(function () {
+  var C = 1000, MIN = 80, MAX = 1920, KEY = "speech-map-v1";
+  var state = { nodes: [], links: [], order: [], updatedAt: 0 };
+  var openId = null, delTimer = null, view = "map", toastTimer = null;
+
+  var $ = function (id) { return document.getElementById(id); };
+  var world = $("world"), links = $("links"), scroller = $("scroller"), orderview = $("orderview");
+  var sheet = $("sheet"), copysheet = $("copysheet"), backdrop = $("backdrop");
+  var NS = "http://www.w3.org/2000/svg";
+
+  function uid() { return "s" + Date.now().toString(36) + Math.random().toString(36).slice(2, 6); }
+  function byId(id) { for (var i = 0; i < state.nodes.length; i++) if (state.nodes[i].id === id) return state.nodes[i]; return null; }
+  function clamp(v) { return Math.max(MIN, Math.min(MAX, v)); }
+  function name(n) { return (n.title && n.title.trim()) || "Untitled story"; }
+  function real() { return state.nodes.filter(function (n) { return !n.example; }); }
+
+  function normalise() {
+    if (!Array.isArray(state.links)) state.links = [];
+    if (!Array.isArray(state.order)) state.order = [];
+    state.links = state.links.filter(function (p) { return Array.isArray(p) && byId(p[0]) && byId(p[1]) && p[0] !== p[1]; });
+    var ids = real().map(function (n) { return n.id; });
+    var seen = {};
+    state.order = state.order.filter(function (id) { if (seen[id] || ids.indexOf(id) < 0) return false; seen[id] = 1; return true; });
+    ids.forEach(function (id) { if (!seen[id]) state.order.push(id); });
+  }
+  function isLinked(a, b) {
+    return state.links.some(function (p) { return (p[0] === a && p[1] === b) || (p[0] === b && p[1] === a); });
+  }
+  function toggleLink(a, b) {
+    if (isLinked(a, b)) {
+      state.links = state.links.filter(function (p) { return !((p[0] === a && p[1] === b) || (p[0] === b && p[1] === a)); });
+    } else {
+      state.links.push([a, b]);
+    }
+  }
+  function linkedNames(n) {
+    var out = [];
+    state.links.forEach(function (p) {
+      var other = p[0] === n.id ? p[1] : (p[1] === n.id ? p[0] : null);
+      var o = other && byId(other);
+      if (o) out.push(name(o));
+    });
+    return out;
+  }
+
+  function seed() {
+    return [{
+      id: uid(), x: C + 190, y: C - 150, example: true,
+      title: "The wrong coat",
+      story: "We left the pub and he walked out wearing a stranger's coat. Nobody noticed for two hours. He was completely sure it was his.",
+      funny: "He was completely sure it was his"
+    }];
+  }
+
+  function loadLocal() {
+    try {
+      var raw = localStorage.getItem(KEY);
+      if (raw) { var d = JSON.parse(raw); if (d && Array.isArray(d.nodes)) return d; }
+    } catch (e) {}
+    return null;
+  }
+  function saveLocal() { try { localStorage.setItem(KEY, JSON.stringify(state)); } catch (e) {} }
+  function queueSave() { state.updatedAt = Date.now(); saveLocal(); }
+
+  function line(cls, a, b) {
+    var l = document.createElementNS(NS, "line");
+    l.setAttribute("class", cls);
+    l.setAttribute("x1", a.x); l.setAttribute("y1", a.y);
+    l.setAttribute("x2", b.x); l.setAttribute("y2", b.y);
+    links.appendChild(l);
+  }
+  function drawLines() {
+    while (links.firstChild) links.removeChild(links.firstChild);
+    var root = { x: C, y: C };
+    state.nodes.forEach(function (n) { line("spoke", root, n); });
+    state.links.forEach(function (p) {
+      var a = byId(p[0]), b = byId(p[1]);
+      if (a && b) line("tie", a, b);
+    });
+  }
+
+  function renderMap() {
+    var old = world.querySelectorAll(".node");
+    for (var i = 0; i < old.length; i++) old[i].remove();
+    drawLines();
+    state.nodes.forEach(function (n) {
+      var el = document.createElement("div");
+      el.className = "node" + (n.example ? " example" : "");
+      el.setAttribute("data-id", n.id);
+      el.style.left = n.x + "px"; el.style.top = n.y + "px";
+      var t = document.createElement("div"); t.className = "t"; t.textContent = name(n);
+      el.appendChild(t);
+      if (n.funny) { var f = document.createElement("div"); f.className = "f"; f.textContent = n.funny; el.appendChild(f); }
+      if (n.example) { var g = document.createElement("div"); g.className = "tag"; g.textContent = "Example"; el.appendChild(g); }
+      attachDrag(el, n.id);
+      world.appendChild(el);
+    });
+    $("hint").hidden = real().length > 0;
+  }
+
+  function renderOrder() {
+    orderview.textContent = "";
+    var list = state.order.map(byId).filter(Boolean);
+    if (!list.length) {
+      var e = document.createElement("div"); e.className = "oempty";
+      e.textContent = "No stories yet. Add one on the Map and it will appear here. Use the arrows to set the running order for the speech.";
+      orderview.appendChild(e);
+      return;
+    }
+    list.forEach(function (n, i) {
+      var card = document.createElement("div"); card.className = "ocard";
+      var pos = document.createElement("div"); pos.className = "opos"; pos.textContent = String(i + 1);
+      var body = document.createElement("button"); body.type = "button"; body.className = "obody";
+      var t = document.createElement("div"); t.className = "t"; t.textContent = name(n); body.appendChild(t);
+      if (n.funny) { var f = document.createElement("div"); f.className = "f"; f.textContent = n.funny; body.appendChild(f); }
+      var ln = linkedNames(n);
+      if (ln.length) { var l = document.createElement("div"); l.className = "l"; l.textContent = "Links: " + ln.join(", "); body.appendChild(l); }
+      body.addEventListener("click", function () { openSheet(n.id); });
+      var mv = document.createElement("div"); mv.className = "omove";
+      var up = document.createElement("button"); up.type = "button"; up.textContent = "▲"; up.setAttribute("aria-label", "Move up"); up.disabled = i === 0;
+      var dn = document.createElement("button"); dn.type = "button"; dn.textContent = "▼"; dn.setAttribute("aria-label", "Move down"); dn.disabled = i === list.length - 1;
+      up.addEventListener("click", function () { moveOrder(n.id, -1); });
+      dn.addEventListener("click", function () { moveOrder(n.id, 1); });
+      mv.appendChild(up); mv.appendChild(dn);
+      card.appendChild(pos); card.appendChild(body); card.appendChild(mv);
+      orderview.appendChild(card);
+    });
+  }
+  function moveOrder(id, d) {
+    var i = state.order.indexOf(id), j = i + d;
+    if (i < 0 || j < 0 || j >= state.order.length) return;
+    var t = state.order[i]; state.order[i] = state.order[j]; state.order[j] = t;
+    queueSave(); renderOrder();
+  }
+
+  function render() {
+    normalise();
+    var c = real().length;
+    $("count").textContent = c + (c === 1 ? " story" : " stories") + (state.links.length ? " · " + state.links.length + (state.links.length === 1 ? " link" : " links") : "");
+    renderMap();
+    if (view === "order") renderOrder();
+  }
+
+  function setView(v) {
+    view = v;
+    $("vmap").setAttribute("aria-pressed", v === "map");
+    $("vorder").setAttribute("aria-pressed", v === "order");
+    scroller.hidden = v !== "map";
+    orderview.hidden = v !== "order";
+    $("add").hidden = v !== "map";
+    if (v === "order") renderOrder();
+  }
+  $("vmap").addEventListener("click", function () { setView("map"); });
+  $("vorder").addEventListener("click", function () { setView("order"); });
+
+  function attachDrag(el, id) {
+    var sx, sy, nx, ny, moved, pid = null;
+    el.addEventListener("pointerdown", function (e) {
+      var n = byId(id); if (!n) return;
+      pid = e.pointerId; sx = e.clientX; sy = e.clientY; nx = n.x; ny = n.y; moved = false;
+      try { el.setPointerCapture(pid); } catch (err) {}
+    });
+    el.addEventListener("pointermove", function (e) {
+      if (e.pointerId !== pid) return;
+      var dx = e.clientX - sx, dy = e.clientY - sy;
+      if (!moved && Math.hypot(dx, dy) < 7) return;
+      moved = true;
+      var n = byId(id); if (!n) return;
+      n.x = clamp(nx + dx); n.y = clamp(ny + dy);
+      el.style.left = n.x + "px"; el.style.top = n.y + "px";
+      drawLines();
+    });
+    el.addEventListener("pointerup", function (e) {
+      if (e.pointerId !== pid) return;
+      pid = null;
+      if (moved) queueSave(); else openSheet(id);
+    });
+    el.addEventListener("pointercancel", function (e) { if (e.pointerId === pid) { pid = null; if (moved) queueSave(); } });
+  }
+
+  function buildChips() {
+    var box = $("chips"); box.textContent = "";
+    var others = state.nodes.filter(function (n) { return n.id !== openId && !n.example; });
+    $("linkfield").hidden = false;
+    if (!others.length) {
+      var p = document.createElement("p"); p.className = "note"; p.textContent = "Add another story and you can link the two here.";
+      box.appendChild(p); return;
+    }
+    others.forEach(function (o) {
+      var b = document.createElement("button"); b.type = "button"; b.className = "chip";
+      b.textContent = name(o);
+      b.setAttribute("aria-pressed", isLinked(openId, o.id));
+      b.addEventListener("click", function () {
+        toggleLink(openId, o.id);
+        b.setAttribute("aria-pressed", isLinked(openId, o.id));
+        queueSave();
+      });
+      box.appendChild(b);
+    });
+  }
+
+  function showSheet(which) {
+    sheet.hidden = which !== "edit";
+    copysheet.hidden = which !== "copy";
+    backdrop.hidden = false;
+    $("add").hidden = true;
+  }
+  function hideSheets() {
+    sheet.hidden = true; copysheet.hidden = true; backdrop.hidden = true; openId = null;
+    $("add").hidden = view !== "map";
+  }
+  function openSheet(id) {
+    var n = byId(id); if (!n) return;
+    openId = id;
+    $("title").value = n.title || "";
+    $("story").value = n.story || "";
+    $("funny").value = n.funny || "";
+    $("exnote").hidden = !n.example;
+    resetDel();
+    buildChips();
+    showSheet("edit");
+  }
+  function closeSheet() { hideSheets(); render(); }
+  function onEdit() {
+    var n = byId(openId); if (!n) return;
+    n.title = $("title").value; n.story = $("story").value; n.funny = $("funny").value;
+    if (n.example) { n.example = false; $("exnote").hidden = true; buildChips(); }
+    queueSave();
+  }
+  function resetDel() { clearTimeout(delTimer); var b = $("del"); b.classList.remove("armed"); b.textContent = "Delete"; }
+
+  $("title").addEventListener("input", onEdit);
+  $("story").addEventListener("input", onEdit);
+  $("funny").addEventListener("input", onEdit);
+  $("done").addEventListener("click", closeSheet);
+  backdrop.addEventListener("click", function () { if (!sheet.hidden) closeSheet(); else hideSheets(); });
+  $("del").addEventListener("click", function () {
+    var b = $("del");
+    if (!b.classList.contains("armed")) {
+      b.classList.add("armed"); b.textContent = "Tap again to delete";
+      delTimer = setTimeout(resetDel, 3000);
+      return;
+    }
+    var id = openId;
+    state.nodes = state.nodes.filter(function (n) { return n.id !== id; });
+    queueSave(); closeSheet();
+  });
+
+  $("add").addEventListener("click", function () {
+    var k = state.nodes.length;
+    var a = k * 2.399963, r = 220 + (k % 3) * 55;
+    var n = { id: uid(), x: clamp(C + Math.cos(a) * r), y: clamp(C + Math.sin(a) * r), title: "", story: "", funny: "" };
+    state.nodes.push(n);
+    normalise(); queueSave(); renderMap();
+    scroller.scrollTo({ left: n.x - scroller.clientWidth / 2, top: n.y - scroller.clientHeight / 2 });
+    openSheet(n.id);
+    setTimeout(function () { try { $("title").focus(); } catch (e) {} }, 60);
+  });
+
+  function buildExport() {
+    normalise();
+    var list = state.order.map(byId).filter(Boolean);
+    var out = [];
+    out.push("I'm writing a best man speech. Below are my stories in my current running order, with the funny detail I picked for each and which stories I think link together.");
+    out.push("Please help me: find what's funniest in each, spot links and callbacks between stories, say what to cut, and suggest a better order. Do not write the speech for me.");
+    out.push("");
+    list.forEach(function (n, i) {
+      out.push((i + 1) + ". " + name(n));
+      out.push("What happened: " + ((n.story || "").trim() || "(not written yet)"));
+      out.push("Funny detail: " + ((n.funny || "").trim() || "(not picked yet)"));
+      var ln = linkedNames(n);
+      if (ln.length) out.push("Links to: " + ln.join(", "));
+      out.push("");
+    });
+    return out.join("\n").replace(/\s+$/, "") + "\n";
+  }
+  function toast(msg) {
+    var t = $("toast"); t.textContent = msg;
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(function () { t.textContent = ""; }, 2600);
+  }
+  function copyNow(text, onFail) {
+    var p;
+    try { p = navigator.clipboard && navigator.clipboard.writeText ? navigator.clipboard.writeText(text) : Promise.reject(); } catch (e) { p = Promise.reject(); }
+    p.then(function () { toast("Copied. Paste it into a chat with Claude."); }, onFail);
+  }
+  function openCopySheet(text) {
+    $("copytext").value = text;
+    showSheet("copy");
+    var ta = $("copytext"); ta.focus(); ta.select();
+  }
+  $("copy").addEventListener("click", function () {
+    if (!real().length) { toast("Add a story first."); return; }
+    var text = buildExport();
+    copyNow(text, function () { openCopySheet(text); });
+  });
+  $("copygo").addEventListener("click", function () {
+    var ta = $("copytext");
+    copyNow(ta.value, function () { ta.focus(); ta.select(); toast("Select all and copy by hand."); });
+  });
+  $("copyclose").addEventListener("click", hideSheets);
+
+  document.addEventListener("keydown", function (e) { if (e.key === "Escape") { if (!sheet.hidden) closeSheet(); else if (!copysheet.hidden) hideSheets(); } });
+
+  var local = loadLocal();
+  state = local || { nodes: seed(), links: [], order: [], updatedAt: 0 };
+  render();
+  requestAnimationFrame(function () {
+    scroller.scrollLeft = C - scroller.clientWidth / 2;
+    scroller.scrollTop = C - scroller.clientHeight / 2 + 30;
+  });
+
+  if ("serviceWorker" in navigator) {
+    window.addEventListener("load", function () { navigator.serviceWorker.register("sw.js").catch(function () {}); });
+  }
+})();
+</script>
+</body>
+</html>

@@ -1,0 +1,15 @@
+{
+  "name": "Speech Map",
+  "short_name": "Speech Map",
+  "description": "Map the stories for the speech, link them up and set the running order.",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#060a12",
+  "theme_color": "#060a12",
+  "icons": [
+    { "src": "icon-192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "icon-512.png", "sizes": "512x512", "type": "image/png" },
+    { "src": "icon-maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}
